@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path"
 	"strconv"
 	"strings"
 
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 	jwt "github.com/dgrijalva/jwt-go"
 )
 
@@ -74,158 +72,126 @@ var (
 	}
 )
 
-func (h Auth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
-	// if the request path is any of the configured paths, validate JWT
-	for _, p := range h.Rules {
-
-		// TODO: this is a hack to work our CVE in Caddy dealing with parsing
-		// malformed URLs.  Can be removed once upstream fix for path match
-		if r.URL.EscapedPath() == "" {
-			return handleUnauthorized(w, r, p, h.Realm), nil
-		}
-		cleanedPath := path.Clean(r.URL.Path)
-		if !httpserver.Path(cleanedPath).Matches(p.Path) {
-			continue
-		}
-
-		if r.Method == "OPTIONS" {
-			continue
-		}
-
-		// strip potentially spoofed claims
-		for header := range r.Header {
-			if strings.HasPrefix(header, "Token-Claim-") {
-				r.Header.Del(header)
-			}
-		}
-
-		// Check excepted paths for this rule and allow access without validating any token
-		var isExceptedPath bool
-		for _, e := range p.ExceptedPaths {
-			if httpserver.Path(r.URL.Path).Matches(e) {
-				isExceptedPath = true
-			}
-		}
-		if isExceptedPath {
-			continue
-		}
-		if r.URL.Path == "/" && p.AllowRoot {
-			// special case for protecting children of the root path, only allow access to base directory with directive `allowbase`
-			continue
-		}
-
-		// Path matches, look for unvalidated token
-		uToken, err := ExtractToken(p.TokenSources, r)
-		if err != nil {
-			if p.Passthrough {
-				continue
-			}
-			return handleUnauthorized(w, r, p, h.Realm), nil
-		}
-
-		var vToken *jwt.Token
-
-		if len(p.KeyBackends) <= 0 {
-			vToken, err = ValidateToken(uToken, &NoopKeyBackend{})
-		}
-
-		// Loop through all possible key files on disk, using cache
-		for _, keyBackend := range p.KeyBackends {
-			// Validate token
-			vToken, err = ValidateToken(uToken, keyBackend)
-
-			if err == nil {
-				// break on first correctly validated token
-				break
-			}
-		}
-
-		// Check last error of validating token.  If error still exists, no keyfiles matched
-		if err != nil || vToken == nil {
-			if p.Passthrough {
-				continue
-			}
-			return handleUnauthorized(w, r, p, h.Realm), nil
-		}
-
-		vClaims, err := Flatten(vToken.Claims.(jwt.MapClaims), "", DotStyle)
-		if err != nil {
-			return handleUnauthorized(w, r, p, h.Realm), nil
-		}
-
-		// If token contains rules with allow or deny, evaluate
-		if len(p.AccessRules) > 0 {
-			var isAuthorized []bool
-			for _, rule := range p.AccessRules {
-				v := vClaims[rule.Claim]
-				ruleMatches := contains(v, rule.Value) || v == rule.Value
-				switch rule.Authorize {
-				case ALLOW:
-					isAuthorized = append(isAuthorized, ruleMatches)
-				case DENY:
-					isAuthorized = append(isAuthorized, !ruleMatches)
-				default:
-					return handleUnauthorized(w, r, p, h.Realm), fmt.Errorf("unknown rule type")
-				}
-			}
-			// test all flags, if any are true then ok to pass
-			ok := false
-			for _, result := range isAuthorized {
-				if result {
-					ok = true
-				}
-			}
-			if !ok {
-				return handleForbidden(w, r, p, h.Realm), nil
-			}
-		}
-
-		// set claims as separate headers for downstream to consume
-		for claim, value := range vClaims {
-			var headerName string
-			switch p.StripHeader {
-			case true:
-				stripped := strings.SplitAfter(claim, "/")
-				finalStrip := stripped[len(stripped)-1]
-				headerName = "Token-Claim-" + modTitleCase(finalStrip)
-			default:
-				escaped := url.PathEscape(claim)
-				headerName = "Token-Claim-" + modTitleCase(escaped)
-			}
-
-			switch v := value.(type) {
-			case string:
-				r.Header.Set(headerName, v)
-			case int64:
-				r.Header.Set(headerName, strconv.FormatInt(v, 10))
-			case bool:
-				r.Header.Set(headerName, strconv.FormatBool(v))
-			case int32:
-				r.Header.Set(headerName, strconv.FormatInt(int64(v), 10))
-			case float32:
-				r.Header.Set(headerName, strconv.FormatFloat(float64(v), 'f', -1, 32))
-			case float64:
-				r.Header.Set(headerName, strconv.FormatFloat(v, 'f', -1, 64))
-			case []interface{}:
-				b := bytes.NewBufferString("")
-				for i, item := range v {
-					if i > 0 {
-						b.WriteString(",")
-					}
-					b.WriteString(fmt.Sprintf("%v", item))
-				}
-				r.Header.Set(headerName, b.String())
-			default:
-				// ignore, because, JWT spec says in https://tools.ietf.org/html/rfc7519#section-4
-				//     all claims that are not understood
-				//     by implementations MUST be ignored.
-			}
-		}
-
-		return h.Next.ServeHTTP(w, r)
+// Authenticate validates the user credentials in req and returns the user, if valid.
+func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (User, bool, error) {
+	if r.Method == "OPTIONS" {
+		return User{}, true, nil
 	}
-	// pass request if no paths protected with JWT
-	return h.Next.ServeHTTP(w, r)
+
+	// strip potentially spoofed claims
+	for header := range r.Header {
+		if strings.HasPrefix(header, "Token-Claim-") {
+			r.Header.Del(header)
+		}
+	}
+
+	// Path matches, look for unvalidated token
+	uToken, err := ExtractToken(h.TokenSources, r)
+	if err != nil {
+		if h.Passthrough {
+			return User{}, true, nil
+		}
+		return handleUnauthorized(w, r, h, h.Realm, nil)
+	}
+
+	var vToken *jwt.Token
+
+	if len(h.KeyBackends) <= 0 {
+		vToken, err = ValidateToken(uToken, &NoopKeyBackend{})
+	}
+
+	// Loop through all possible key files on disk, using cache
+	for _, keyBackend := range p.KeyBackends {
+		// Validate token
+		vToken, err = ValidateToken(uToken, keyBackend)
+
+		if err == nil {
+			// break on first correctly validated token
+			break
+		}
+	}
+
+	// Check last error of validating token.  If error still exists, no keyfiles matched
+	if err != nil || vToken == nil {
+		return User{}, h.Passthrough, nil
+	}
+
+	vClaims, err := Flatten(vToken.Claims.(jwt.MapClaims), "", DotStyle)
+	if err != nil {
+		return handleUnauthorized(w, r, h, h.Realm, nil)
+	}
+
+	// If token contains rules with allow or deny, evaluate
+	if len(h.AccessRules) > 0 {
+		var isAuthorized []bool
+		for _, rule := range h.AccessRules {
+			v := vClaims[rule.Claim]
+			ruleMatches := contains(v, rule.Value) || v == rule.Value
+			switch rule.Authorize {
+			case ALLOW:
+				isAuthorized = append(isAuthorized, ruleMatches)
+			case DENY:
+				isAuthorized = append(isAuthorized, !ruleMatches)
+			default:
+				return handleUnauthorized(w, r, h, h.Realm, fmt.Errorf("unknown rule type"))
+			}
+		}
+		// test all flags, if any are true then ok to pass
+		ok := false
+		for _, result := range isAuthorized {
+			if result {
+				ok = true
+			}
+		}
+		if !ok {
+			return handleForbidden(w, r, h, h.Realm, nil)
+		}
+	}
+
+	// set claims as separate headers for downstream to consume
+	for claim, value := range vClaims {
+		var headerName string
+		switch h.StripHeader {
+		case true:
+			stripped := strings.SplitAfter(claim, "/")
+			finalStrip := stripped[len(stripped)-1]
+			headerName = "Token-Claim-" + modTitleCase(finalStrip)
+		default:
+			escaped := url.PathEscape(claim)
+			headerName = "Token-Claim-" + modTitleCase(escaped)
+		}
+
+		switch v := value.(type) {
+		case string:
+			r.Header.Set(headerName, v)
+		case int64:
+			r.Header.Set(headerName, strconv.FormatInt(v, 10))
+		case bool:
+			r.Header.Set(headerName, strconv.FormatBool(v))
+		case int32:
+			r.Header.Set(headerName, strconv.FormatInt(int64(v), 10))
+		case float32:
+			r.Header.Set(headerName, strconv.FormatFloat(float64(v), 'f', -1, 32))
+		case float64:
+			r.Header.Set(headerName, strconv.FormatFloat(v, 'f', -1, 64))
+		case []interface{}:
+			b := bytes.NewBufferString("")
+			for i, item := range v {
+				if i > 0 {
+					b.WriteString(",")
+				}
+				b.WriteString(fmt.Sprintf("%v", item))
+			}
+			r.Header.Set(headerName, b.String())
+		default:
+			// ignore, because, JWT spec says in https://tools.ietf.org/html/rfc7519#section-4
+			//     all claims that are not understood
+			//     by implementations MUST be ignored.
+		}
+	}
+
+	// If we got there, we're good
+	return User{ID: claim + "-" + value}, true, nil
 }
 
 // ExtractToken will find a JWT token in the token sources specified.
@@ -269,28 +235,28 @@ func ValidateToken(uToken string, keyBackend KeyBackend) (*jwt.Token, error) {
 // handleUnauthorized checks, which action should be performed if access was denied.
 // It returns the status code and writes the Location header in case of a redirect.
 // Possible caddy variables in the location value will be substituted.
-func handleUnauthorized(w http.ResponseWriter, r *http.Request, rule Rule, realm string) int {
+func handleUnauthorized(w http.ResponseWriter, r *http.Request, rule Auth, realm string, err error) (User{}, bool, error) {
 	if rule.Redirect != "" {
 		replacer := httpserver.NewReplacer(r, nil, "")
 		http.Redirect(w, r, replacer.Replace(rule.Redirect), http.StatusSeeOther)
-		return http.StatusSeeOther
+		return User{}, false, err
 	}
 
 	w.Header().Add("WWW-Authenticate", fmt.Sprintf("Bearer realm=\"%s\",error=\"invalid_token\"", realm))
-	return http.StatusUnauthorized
+	return User{}, false, err
 }
 
 // handleForbidden checks, which action should be performed if access was denied.
 // It returns the status code and writes the Location header in case of a redirect.
 // Possible caddy variables in the location value will be substituted.
-func handleForbidden(w http.ResponseWriter, r *http.Request, rule Rule, realm string) int {
+func handleForbidden(w http.ResponseWriter, r *http.Request, rule Auth, realm string, err error) (User{}, bool, error) {
 	if rule.Redirect != "" {
 		replacer := httpserver.NewReplacer(r, nil, "")
 		http.Redirect(w, r, replacer.Replace(rule.Redirect), http.StatusSeeOther)
-		return http.StatusSeeOther
+		return User{}, false, err
 	}
 	w.Header().Add("WWW-Authenticate", fmt.Sprintf("Bearer realm=\"%s\",error=\"insufficient_scope\"", realm))
-	return http.StatusForbidden
+	return User{}, false, err
 }
 
 // contains checks weather list is a slice ans containts the
