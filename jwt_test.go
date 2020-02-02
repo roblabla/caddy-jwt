@@ -1,22 +1,11 @@
 package jwt
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"strings"
-	"testing"
-	"time"
-
-	"io/ioutil"
-
-	jwt "github.com/dgrijalva/jwt-go"
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
+/*
 const (
 	validToken     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ"
 	malformedToken = "loremIpsum"
@@ -1185,3 +1174,4 @@ func createKeyFile(key string) (string, error) {
 	}
 	return f.Name(), nil
 }
+*/

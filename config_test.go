@@ -1,18 +1,11 @@
 package jwt
 
 import (
-	"net/http"
-	"testing"
-
-	"fmt"
-	"os"
-
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
+/*
 func TestCaddyJwtConfig(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "CaddyJWT Config Suite")
@@ -208,3 +201,4 @@ var _ = Describe("JWTAuth Config", func() {
 
 	})
 })
+*/
