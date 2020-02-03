@@ -55,7 +55,7 @@ type AccessRule struct {
 // CaddyModule returns the Caddy module information.
 func (Auth) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.jwt",
+		ID:  "http.authentication.providers.jwt",
 		New: func() caddy.Module { return new(Auth) },
 	}
 }
@@ -85,6 +85,13 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 	var r = Auth{
 		KeyBackends: defaultKeyBackends,
 	}
+
+	// JWT token.
+	if !h.Next() {
+		return nil, h.ArgErr()
+	}
+
+	// Matcher gets removed, so we don't need to care about it.
 
 	args := h.RemainingArgs()
 	switch len(args) {
@@ -171,7 +178,8 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 		}
 	default:
 		// we want only block arguments
-		return nil, h.ArgErr()
+		//return nil, h.ArgErr()
+		return nil, h.Errf("unexpected args: '%v'", args)
 	}
 
 	// check all rules at least have a consistent encryption config

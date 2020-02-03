@@ -1,3 +1,7 @@
+# v4.0.0
+
+Port to caddy 2.
+
 # v3.7.0
 
 Added ability to change the precedence of token sources and configure the names of the cookie or query parameter.  Thanks @igor-petruk!
@@ -8,7 +12,7 @@ Critical bug fix for malformed paths that allow access to protected resources.  
 
 # v3.1.0
 
-Allows OPTIONS requests to pass through without authentication to conform with the CORS spec 
+Allows OPTIONS requests to pass through without authentication to conform with the CORS spec
 
 # v3.0.0
 

@@ -1,11 +1,20 @@
 package jwt
 
 import (
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	jwt "github.com/dgrijalva/jwt-go"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
-/*
 const (
 	validToken     = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ"
 	malformedToken = "loremIpsum"
@@ -450,60 +459,52 @@ var _ = Describe("Auth", func() {
 
 			rec := httptest.NewRecorder()
 			rw := Auth{
-				Rules: []Rule{{Path: "/testing", Redirect: "/login"}},
+				Redirect: "/login",
 			}
-			result, err := rw.ServeHTTP(rec, req)
+			_, result, err := rw.Authenticate(rec, req)
 			if err != nil {
 				Fail(fmt.Sprintf("unexpected error constructing server: %s", err))
 			}
 
-			Expect(result).To(Equal(http.StatusSeeOther))
+			Expect(result).To(Equal(false))
 			Expect(rec.Result().StatusCode).To(Equal(http.StatusSeeOther))
 			Expect(rec.Result().Header.Get("Location")).To(Equal("/login"))
 		})
 		It("variables in location value are replaced", func() {
-			req, err := http.NewRequest("GET", "/testing", nil)
+			req, err := http.NewRequest("GET", "/", nil)
 
 			rec := httptest.NewRecorder()
 			rw := Auth{
-				Rules: []Rule{{Path: "/testing", Redirect: "/login?backTo={rewrite_uri}"}},
+				Redirect: "/login?backTo={rewrite_uri}",
 			}
-			result, err := rw.ServeHTTP(rec, req)
+			_, result, err := rw.Authenticate(rec, req)
 			if err != nil {
 				Fail(fmt.Sprintf("unexpected error constructing server: %s", err))
 			}
 
-			Expect(result).To(Equal(http.StatusSeeOther))
+			Expect(result).To(Equal(false))
 			Expect(rec.Result().StatusCode).To(Equal(http.StatusSeeOther))
 			Expect(rec.Result().Header.Get("Location")).To(Equal("/login?backTo=/testing"))
 		})
 	})
-	Describe("Function correctly as an authorization middleware for malformed paths", func() {
+	/*Describe("Function correctly as an authorization middleware for malformed paths", func() {
 		It("return 401 when no authorization header and the path is protected (malformed path - 1st level)", func() {
 			rw := Auth{
-				Next: httpserver.HandlerFunc(passThruHandler),
-				Rules: []Rule{
-					Rule{Path: "/"},
-				},
 				Realm: "testing.com",
 			}
 			req, err := http.NewRequest("GET", "//testing", nil)
 
 			rec := httptest.NewRecorder()
-			result, err := rw.ServeHTTP(rec, req)
+			_, result, err := rw.Authenticate(rec, req)
 			if err != nil {
 				Fail(fmt.Sprintf("unexpected error constructing server: %s", err))
 			}
 
-			Expect(result).To(Equal(http.StatusUnauthorized))
+			Expect(result).To(Equal(false))
 			Expect(rec.Result().Header.Get("WWW-Authenticate")).To(Equal("Bearer realm=\"testing.com\",error=\"invalid_token\""))
 		})
 		It("return 401 when no authorization header and the path is protected (malformed path - root level)", func() {
 			rw := Auth{
-				Next: httpserver.HandlerFunc(passThruHandler),
-				Rules: []Rule{
-					Rule{Path: "/"},
-				},
 				Realm: "testing.com",
 			}
 			req, err := http.NewRequest("GET", "//", nil)
@@ -1157,7 +1158,7 @@ var _ = Describe("Auth", func() {
 				Expect(result).To(Equal(http.StatusUnauthorized))
 			})
 		})
-	})
+	})*/
 
 })
 
@@ -1174,4 +1175,3 @@ func createKeyFile(key string) (string, error) {
 	}
 	return f.Name(), nil
 }
-*/
