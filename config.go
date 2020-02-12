@@ -9,6 +9,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/caddyauth"
+	"go.uber.org/zap"
 )
 
 // RuleType distinguishes between ALLOW and DENY rules
@@ -34,15 +35,22 @@ const (
 
 // Auth represents configuration information for the middleware
 type Auth struct {
-	// TODO: Matcher
-	Realm        string        `json:"realm,omitempty"`
-	AccessRules  []AccessRule  `json:"access_rules,omitempty"`
-	Redirect     string        `json:"redirect,omitempty"`
-	KeyBackends  []KeyBackend  `json:"key_backends,omitempty"`
-	Passthrough  bool          `json:"passthrough"`
-	StripHeader  bool          `json:"strip_header"`
-	TokenSources []TokenSource `json:"token_sources,omitempty"`
+	Realm        string             `json:"realm,omitempty"`
+	AccessRules  []AccessRule       `json:"access_rules,omitempty"`
+	Redirect     string             `json:"redirect,omitempty"`
+	KeyBackends  []KeyBackendHolder `json:"key_backends,omitempty"`
+	Passthrough  bool               `json:"passthrough"`
+	StripHeader  bool               `json:"strip_header"`
+	TokenSources []TokenSource      `json:"token_sources,omitempty"`
+	Logger       *zap.Logger        `json:"-"`
 }
+
+var (
+	_ caddy.Module            = (*Auth)(nil)
+	_ caddy.Provisioner       = (*Auth)(nil)
+	_ caddy.Validator         = (*Auth)(nil)
+	_ caddyauth.Authenticator = (*Auth)(nil)
+)
 
 // AccessRule represents a single ALLOW/DENY rule based on the value of a claim in
 // a validated token
@@ -60,6 +68,32 @@ func (Auth) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
+func (auth *Auth) Provision(ctx caddy.Context) error {
+	auth.Logger = ctx.Logger(auth)
+	return nil
+}
+
+func (auth *Auth) Validate() error {
+	// check all rules at least have a consistent encryption config
+	var encType EncryptionType
+	for _, e := range auth.KeyBackends {
+		switch e.Value.(type) {
+		case *HmacKeyBackend, *LazyHmacKeyBackend, *EnvHmacKeyBackend:
+			if encType > 0 && encType != HMAC {
+				return fmt.Errorf("Configuration does not have a consistent encryption type.  Cannot use both HMAC and PKI for a single path value.")
+			}
+			encType = HMAC
+		case *PublicKeyBackend, *LazyPublicKeyBackend:
+			if encType > 0 && encType != PKI {
+				return fmt.Errorf("Configuration does not have a consistent encryption type.  Cannot use both HMAC and PKI for a single path value.")
+			}
+			encType = PKI
+		}
+	}
+
+	return nil
+}
+
 func init() {
 	err := caddy.RegisterModule(Auth{})
 	if err != nil {
@@ -71,8 +105,16 @@ func init() {
 // parseCaddyfile sets up the handler from Caddyfile tokens. Syntax:
 //
 //     jwt [<matcher>] {
-//         <username> <hashed_password_base64> [<salt_base64>]
-//         ...
+//         allow <claim> <value>
+//         deny <claim> <value>
+//         redirect <path>
+//         publickey <path>
+//         secret <path>
+//         passthrough
+//         strip_header
+//         token_source header <header_name>
+//         token_source cookie <cookie_name>
+//         token_source query_param <param_name>
 //     }
 //
 // If no hash algorithm is supplied, bcrypt will be assumed.
@@ -126,7 +168,7 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 				if err != nil {
 					return nil, h.Err(err.Error())
 				}
-				r.KeyBackends = append(r.KeyBackends, backend)
+				r.KeyBackends = append(r.KeyBackends, *backend)
 			case "secret":
 				args1 := h.RemainingArgs()
 				if len(args1) != 1 {
@@ -136,7 +178,7 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 				if err != nil {
 					return nil, h.Err(err.Error())
 				}
-				r.KeyBackends = append(r.KeyBackends, backend)
+				r.KeyBackends = append(r.KeyBackends, *backend)
 			case "passthrough":
 				r.Passthrough = true
 			case "strip_header":
@@ -180,23 +222,6 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 		// we want only block arguments
 		//return nil, h.ArgErr()
 		return nil, h.Errf("unexpected args: '%v'", args)
-	}
-
-	// check all rules at least have a consistent encryption config
-	var encType EncryptionType
-	for _, e := range r.KeyBackends {
-		switch e.(type) {
-		case *LazyHmacKeyBackend:
-			if encType > 0 && encType != HMAC {
-				return nil, fmt.Errorf("Configuration does not have a consistent encryption type.  Cannot use both HMAC and PKI for a single path value.")
-			}
-			encType = HMAC
-		case *LazyPublicKeyBackend:
-			if encType > 0 && encType != PKI {
-				return nil, fmt.Errorf("Configuration does not have a consistent encryption type.  Cannot use both HMAC and PKI for a single path value.")
-			}
-			encType = PKI
-		}
 	}
 
 	return caddyauth.Authentication{

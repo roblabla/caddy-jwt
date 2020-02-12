@@ -11,6 +11,7 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/caddyauth"
 	jwt "github.com/dgrijalva/jwt-go"
+	"go.uber.org/zap"
 )
 
 type TokenSource interface {
@@ -90,6 +91,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 	// Path matches, look for unvalidated token
 	uToken, err := ExtractToken(h.TokenSources, r)
 	if err != nil {
+		h.Logger.Error("Failed to extract token", zap.Error(err))
 		if h.Passthrough {
 			return caddyauth.User{}, true, nil
 		}
@@ -105,11 +107,13 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 	// Loop through all possible key files on disk, using cache
 	for _, keyBackend := range h.KeyBackends {
 		// Validate token
-		vToken, err = ValidateToken(uToken, keyBackend)
+		vToken, err = ValidateToken(uToken, keyBackend.Value)
 
 		if err == nil {
 			// break on first correctly validated token
 			break
+		} else {
+			h.Logger.Error("Failed to validate token", zap.Error(err))
 		}
 	}
 
@@ -120,6 +124,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 
 	vClaims, err := Flatten(vToken.Claims.(jwt.MapClaims), "", DotStyle)
 	if err != nil {
+		h.Logger.Error("Failed to flatten claims", zap.Error(err))
 		return handleUnauthorized(w, r, h, h.Realm, nil)
 	}
 
@@ -135,6 +140,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 			case DENY:
 				isAuthorized = append(isAuthorized, !ruleMatches)
 			default:
+				h.Logger.Error("Unknown rule type for claim", zap.String("claim", rule.Claim), zap.Int("Authorize", (int)(rule.Authorize)))
 				return handleUnauthorized(w, r, h, h.Realm, fmt.Errorf("unknown rule type"))
 			}
 		}
@@ -146,6 +152,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 			}
 		}
 		if !ok {
+			h.Logger.Error("No valid token provided.")
 			return handleForbidden(w, r, h, h.Realm, nil)
 		}
 	}

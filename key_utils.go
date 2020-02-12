@@ -5,9 +5,48 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"io/ioutil"
+	"encoding/json"
+	"reflect"
 
 	"github.com/dgrijalva/jwt-go"
 )
+
+type PublicKeyMarshal struct {
+	Key interface{}
+}
+
+func (key *PublicKeyMarshal) MarshalJSON() ([]byte, error) {
+	var ty string
+
+	if IsRsaPublicKey(key) {
+		ty = "rsa"
+	} else if IsEcdsaPublicKey(key) {
+		ty = "ecdsa"
+	} else {
+		return nil, fmt.Errorf("Invalid public key type")
+	}
+
+	value := struct {
+		Type string `json:"type"`
+		Value interface{} `json:"value"`
+	}{Type: ty, Value: key.Key}
+
+	return json.Marshal(&value)
+}
+
+func (key *PublicKeyMarshal) UnmarshalJSON(data []byte) error {
+	value, err := UnmarshalCustomValue(data, "type", "value", map[string]reflect.Type{
+		"rsa": reflect.TypeOf(rsa.PublicKey{}),
+		"ecdsa": reflect.TypeOf(ecdsa.PublicKey{}),
+	})
+	if err != nil {
+		return err
+	}
+
+	key.Key = value
+
+	return nil
+}
 
 func ParsePublicKey(pem []byte) (interface{}, error) {
 	result, err := jwt.ParseRSAPublicKeyFromPEM(pem)
@@ -68,4 +107,28 @@ func AssertHmacToken(token *jwt.Token) error {
 		return fmt.Errorf("expect token signed with HMAC but got %v", token.Header["alg"])
 	}
 	return nil
+}
+
+func UnmarshalCustomValue(data []byte, typeJsonField, valueJsonField string, customTypes map[string]reflect.Type) (interface{}, error) {
+	m := map[string]interface{}{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+
+	typeName := m[typeJsonField].(string)
+	var value interface{}
+	if ty, found := customTypes[typeName]; found {
+		value = reflect.New(ty).Interface()
+	}
+
+	valueBytes, err := json.Marshal(m[valueJsonField])
+	if err != nil {
+		return nil, err
+	}
+
+	if err = json.Unmarshal(valueBytes, &value); err != nil {
+		return nil, err
+	}
+
+	return value, nil
 }
