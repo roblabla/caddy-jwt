@@ -91,7 +91,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 	// Path matches, look for unvalidated token
 	uToken, err := ExtractToken(h.TokenSources, r)
 	if err != nil {
-		h.Logger.Error("Failed to extract token", zap.Error(err))
+		h.logger.Error("Failed to extract token", zap.Error(err))
 		if h.Passthrough {
 			return caddyauth.User{}, true, nil
 		}
@@ -113,7 +113,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 			// break on first correctly validated token
 			break
 		} else {
-			h.Logger.Error("Failed to validate token", zap.Error(err))
+			h.logger.Error("Failed to validate token", zap.Error(err))
 		}
 	}
 
@@ -124,7 +124,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 
 	vClaims, err := Flatten(vToken.Claims.(jwt.MapClaims), "", DotStyle)
 	if err != nil {
-		h.Logger.Error("Failed to flatten claims", zap.Error(err))
+		h.logger.Error("Failed to flatten claims", zap.Error(err))
 		return handleUnauthorized(w, r, h, h.Realm, nil)
 	}
 
@@ -140,7 +140,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 			case DENY:
 				isAuthorized = append(isAuthorized, !ruleMatches)
 			default:
-				h.Logger.Error("Unknown rule type for claim", zap.String("claim", rule.Claim), zap.Int("Authorize", (int)(rule.Authorize)))
+				h.logger.Error("Unknown rule type for claim", zap.String("claim", rule.Claim), zap.Int("Authorize", (int)(rule.Authorize)))
 				return handleUnauthorized(w, r, h, h.Realm, fmt.Errorf("unknown rule type"))
 			}
 		}
@@ -152,7 +152,7 @@ func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.Us
 			}
 		}
 		if !ok {
-			h.Logger.Error("No valid token provided.")
+			h.logger.Error("No valid token provided.")
 			return handleForbidden(w, r, h, h.Realm, nil)
 		}
 	}

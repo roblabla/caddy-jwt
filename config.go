@@ -42,7 +42,7 @@ type Auth struct {
 	Passthrough  bool               `json:"passthrough"`
 	StripHeader  bool               `json:"strip_header"`
 	TokenSources []TokenSource      `json:"token_sources,omitempty"`
-	Logger       *zap.Logger        `json:"-"`
+	logger       *zap.Logger        `json:"-"`
 }
 
 var (
@@ -69,7 +69,7 @@ func (Auth) CaddyModule() caddy.ModuleInfo {
 }
 
 func (auth *Auth) Provision(ctx caddy.Context) error {
-	auth.Logger = ctx.Logger(auth)
+	auth.logger = ctx.Logger(auth)
 	return nil
 }
 
