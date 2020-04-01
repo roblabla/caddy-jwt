@@ -250,12 +250,6 @@ func ValidateToken(uToken string, keyBackend KeyBackend) (*jwt.Token, error) {
 // It returns the status code and writes the Location header in case of a redirect.
 // Possible caddy variables in the location value will be substituted.
 func handleUnauthorized(w http.ResponseWriter, r *http.Request, rule Auth, realm string, err error) (caddyauth.User, bool, error) {
-	if rule.Redirect != "" {
-		replacer := caddy.NewReplacer()
-		http.Redirect(w, r, replacer.ReplaceAll(rule.Redirect, ""), http.StatusSeeOther)
-		return caddyauth.User{}, false, err
-	}
-
 	w.Header().Add("WWW-Authenticate", fmt.Sprintf("Bearer realm=\"%s\",error=\"invalid_token\"", realm))
 	return caddyauth.User{}, false, err
 }
@@ -264,11 +258,6 @@ func handleUnauthorized(w http.ResponseWriter, r *http.Request, rule Auth, realm
 // It returns the status code and writes the Location header in case of a redirect.
 // Possible caddy variables in the location value will be substituted.
 func handleForbidden(w http.ResponseWriter, r *http.Request, rule Auth, realm string, err error) (caddyauth.User, bool, error) {
-	if rule.Redirect != "" {
-		replacer := caddy.NewReplacer()
-		http.Redirect(w, r, replacer.ReplaceAll(rule.Redirect, ""), http.StatusSeeOther)
-		return caddyauth.User{}, false, err
-	}
 	w.Header().Add("WWW-Authenticate", fmt.Sprintf("Bearer realm=\"%s\",error=\"insufficient_scope\"", realm))
 	return caddyauth.User{}, false, err
 }

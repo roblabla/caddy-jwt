@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -37,7 +38,6 @@ const (
 type Auth struct {
 	Realm        string             `json:"realm,omitempty"`
 	AccessRules  []AccessRule       `json:"access_rules,omitempty"`
-	Redirect     string             `json:"redirect,omitempty"`
 	KeyBackends  []KeyBackendHolder `json:"key_backends,omitempty"`
 	Passthrough  bool               `json:"passthrough"`
 	StripHeader  bool               `json:"strip_header"`
@@ -99,7 +99,7 @@ func init() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpcaddyfile.RegisterHandlerDirective("jwt", parseCaddyfile)
+	httpcaddyfile.RegisterDirective("jwt", parseCaddyfile)
 }
 
 // parseCaddyfile sets up the handler from Caddyfile tokens. Syntax:
@@ -118,15 +118,37 @@ func init() {
 //     }
 //
 // If no hash algorithm is supplied, bcrypt will be assumed.
-func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+func parseCaddyfile(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error) {
 	defaultKeyBackends, err := NewDefaultKeyBackends()
 	if err != nil {
 		return nil, err
 	}
 
+	// Grab matcher
+	if !h.Next() {
+		return nil, h.ArgErr()
+	}
+
+	matcherSet, ok, err := h.MatcherToken()
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		// strip matcher token; we don't need to
+		// use the return value here because a
+		// new dispenser should have been made
+		// solely for this directive's tokens,
+		// with no other uses of same slice
+		h.Dispenser.Delete()
+	}
+
+	h.Dispenser.Reset() // pretend this lookahead never happened
+
 	var r = Auth{
 		KeyBackends: defaultKeyBackends,
 	}
+
+	var shouldRedirect *string = nil
 
 	// JWT token.
 	if !h.Next() {
@@ -158,7 +180,7 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 				if len(args1) != 1 {
 					return nil, h.ArgErr()
 				}
-				r.Redirect = args1[0]
+				shouldRedirect = &args1[0]
 			case "publickey":
 				args1 := h.RemainingArgs()
 				if len(args1) != 1 {
@@ -224,9 +246,40 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 		return nil, h.Errf("unexpected args: '%v'", args)
 	}
 
-	return caddyauth.Authentication{
+	authHandler := caddyauth.Authentication{
 		ProvidersRaw: caddy.ModuleMap{
 			"jwt": caddyconfig.JSON(r, nil),
 		},
-	}, nil
+	}
+
+	if shouldRedirect != nil {
+		authRoute := caddyhttp.Route{
+			HandlersRaw: []json.RawMessage{
+				caddyconfig.JSONModuleObject(authHandler, "handler", authHandler.CaddyModule().ID.Name(), nil),
+			},
+		}
+
+		redirectHandler := caddyhttp.StaticResponse{
+			StatusCode: "303",
+			Headers: http.Header{
+				"Location": {*shouldRedirect},
+			},
+		}
+		redirectRoute := caddyhttp.Route{
+			HandlersRaw: []json.RawMessage{
+				caddyconfig.JSONModuleObject(redirectHandler, "handler", redirectHandler.CaddyModule().ID.Name(), nil),
+			},
+			Terminal: true,
+		}
+		subroute := caddyhttp.Subroute{
+			Routes: []caddyhttp.Route{authRoute},
+			Errors: &caddyhttp.HTTPErrorConfig{
+				Routes: []caddyhttp.Route{redirectRoute},
+			},
+		}
+
+		return h.NewRoute(matcherSet, &subroute), nil
+	} else {
+		return h.NewRoute(matcherSet, authHandler), nil
+	}
 }
