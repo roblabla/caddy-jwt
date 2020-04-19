@@ -1,9 +1,12 @@
 package jwt
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"strings"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
@@ -24,6 +27,47 @@ const (
 	DENY
 )
 
+func (s RuleType) String() string {
+	return toString[s]
+}
+
+var toString = map[RuleType]string{
+	ALLOW: "ALLOW",
+	DENY:  "DENY",
+}
+
+var toID = map[string]RuleType{
+	"ALLOW": ALLOW,
+	"DENY":  DENY,
+}
+
+// MarshalJSON marshals the enum as a quoted json string
+func (s RuleType) MarshalJSON() ([]byte, error) {
+	buffer := bytes.NewBufferString(`"`)
+	buffer.WriteString(toString[s])
+	buffer.WriteString(`"`)
+	return buffer.Bytes(), nil
+}
+
+// UnmarshalJSON unmashals a quoted json string to the enum value
+func (s *RuleType) UnmarshalJSON(b []byte) error {
+	var j string
+	var num int
+
+	err := json.Unmarshal(b, &num)
+	if err == nil {
+		*s = RuleType(num)
+		return nil
+	}
+	err = json.Unmarshal(b, &j)
+	if err != nil {
+		return err
+	}
+	// Note that if the string cannot be found then it will be set to the zero value, 'Created' in this case.
+	*s = toID[strings.ToUpper(j)]
+	return nil
+}
+
 // EncryptionType specifies the valid configuration for a path
 type EncryptionType int
 
@@ -36,6 +80,7 @@ const (
 
 // Auth represents configuration information for the middleware
 type Auth struct {
+	// The name of the realm. Default: restricted
 	Realm        string             `json:"realm,omitempty"`
 	AccessRules  []AccessRule       `json:"access_rules,omitempty"`
 	KeyBackends  []KeyBackendHolder `json:"key_backends,omitempty"`

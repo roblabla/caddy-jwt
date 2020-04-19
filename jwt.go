@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/caddyauth"
 	jwt "github.com/dgrijalva/jwt-go"
 	"go.uber.org/zap"
@@ -77,6 +76,8 @@ var (
 
 // Authenticate validates the user credentials in req and returns the user, if valid.
 func (h Auth) Authenticate(w http.ResponseWriter, r *http.Request) (caddyauth.User, bool, error) {
+	// Always let OPTIONS requests through
+	// TODO: Is it correct to pass OPTIONS through as if authentication had succeeded?
 	if r.Method == "OPTIONS" {
 		return caddyauth.User{}, true, nil
 	}

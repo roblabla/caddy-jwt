@@ -1,12 +1,12 @@
 package jwt
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
-	"time"
-	"encoding/json"
 	"reflect"
+	"time"
 
 	"github.com/dgrijalva/jwt-go"
 )
@@ -21,7 +21,7 @@ type KeyBackend interface {
 
 // LazyPublicKeyBackend contains state to manage lazy key loading for RS and ES family algorithms
 type LazyPublicKeyBackend struct {
-	filename  string
+	Filename  string `json:"filename"`
 	modTime   time.Time
 	publicKey PublicKeyMarshal
 }
@@ -31,9 +31,9 @@ func NewLazyPublicKeyFileBackend(value string) (*KeyBackendHolder, error) {
 	if len(value) <= 0 {
 		return nil, fmt.Errorf("empty filename for public key provided")
 	}
-	return &KeyBackendHolder {
+	return &KeyBackendHolder{
 		Value: &LazyPublicKeyBackend{
-			filename: value,
+			Filename: value,
 		},
 	}, nil
 }
@@ -53,17 +53,17 @@ func (instance *LazyPublicKeyBackend) ProvideKey(token *jwt.Token) (interface{},
 }
 
 func (instance *LazyPublicKeyBackend) loadIfRequired() error {
-	finfo, err := os.Stat(instance.filename)
+	finfo, err := os.Stat(instance.Filename)
 	if os.IsNotExist(err) {
-		return fmt.Errorf("public key file '%s' does not exist", instance.filename)
+		return fmt.Errorf("public key file '%s' does not exist", instance.Filename)
 	}
 	if instance.publicKey.Key == nil || !finfo.ModTime().Equal(instance.modTime) {
-		instance.publicKey.Key, err = ReadPublicKeyFile(instance.filename)
+		instance.publicKey.Key, err = ReadPublicKeyFile(instance.Filename)
 		if err != nil {
-			return fmt.Errorf("could not load public key file '%s': %v", instance.filename, err)
+			return fmt.Errorf("could not load public key file '%s': %v", instance.Filename, err)
 		}
 		if instance.publicKey.Key == nil {
-			return fmt.Errorf("no public key contained in file '%s'", instance.filename)
+			return fmt.Errorf("no public key contained in file '%s'", instance.Filename)
 		}
 	}
 	return nil
@@ -81,7 +81,7 @@ func NewLazyHmacKeyBackend(value string) (*KeyBackendHolder, error) {
 	if len(value) <= 0 {
 		return nil, fmt.Errorf("empty filename for secret provided")
 	}
-	return &KeyBackendHolder {
+	return &KeyBackendHolder{
 		Value: &LazyHmacKeyBackend{
 			filename: value,
 		},
@@ -127,7 +127,7 @@ func NewDefaultKeyBackends() ([]KeyBackendHolder, error) {
 
 	secret := os.Getenv(ENV_SECRET)
 	if len(secret) > 0 {
-		result = append(result, KeyBackendHolder {
+		result = append(result, KeyBackendHolder{
 			Value: &HmacKeyBackend{
 				secret: []byte(secret),
 			},
@@ -140,9 +140,9 @@ func NewDefaultKeyBackends() ([]KeyBackendHolder, error) {
 		if err != nil {
 			return nil, fmt.Errorf("public key provided in environment variable %s could not be read: %v", ENV_PUBLIC_KEY, err)
 		}
-		result = append(result, KeyBackendHolder {
+		result = append(result, KeyBackendHolder{
 			Value: &PublicKeyBackend{
-				publicKey: PublicKeyMarshal {
+				publicKey: PublicKeyMarshal{
 					Key: pub,
 				},
 			},
@@ -151,7 +151,7 @@ func NewDefaultKeyBackends() ([]KeyBackendHolder, error) {
 
 	// If no backend exist, let's hope loginsrv will set one up later
 	if len(result) == 0 {
-		result = append(result, KeyBackendHolder {
+		result = append(result, KeyBackendHolder{
 			Value: &EnvHmacKeyBackend{},
 		})
 	}
@@ -196,7 +196,7 @@ func (instance *NoopKeyBackend) ProvideKey(token *jwt.Token) (interface{}, error
 	return nil, fmt.Errorf("there is no keybackend available")
 }
 
-type EnvHmacKeyBackend struct{
+type EnvHmacKeyBackend struct {
 	secret []byte `json:"secret,omitempty"`
 }
 
@@ -225,20 +225,20 @@ func (backend *KeyBackendHolder) MarshalJSON() ([]byte, error) {
 	var ty string
 
 	switch backend.Value.(type) {
-		case *HmacKeyBackend:
-			ty = "hmac_key_backend"
-		case *LazyHmacKeyBackend:
-			ty = "lazy_hmac_key_backend"
-		case*EnvHmacKeyBackend:
-			ty = "env_hmac_key_backend"
-		case *PublicKeyBackend:
-			ty = "public_key_backend"
-		case *LazyPublicKeyBackend:
-			ty = "lazy_public_key_backend"
+	case *HmacKeyBackend:
+		ty = "hmac_key_backend"
+	case *LazyHmacKeyBackend:
+		ty = "lazy_hmac_key_backend"
+	case *EnvHmacKeyBackend:
+		ty = "env_hmac_key_backend"
+	case *PublicKeyBackend:
+		ty = "public_key_backend"
+	case *LazyPublicKeyBackend:
+		ty = "lazy_public_key_backend"
 	}
 
 	value := struct {
-		Type string `json:"type"`
+		Type  string      `json:"type"`
 		Value interface{} `json:"value"`
 	}{Type: ty, Value: backend.Value}
 
@@ -247,10 +247,10 @@ func (backend *KeyBackendHolder) MarshalJSON() ([]byte, error) {
 
 func (keys *KeyBackendHolder) UnmarshalJSON(data []byte) error {
 	value, err := UnmarshalCustomValue(data, "type", "value", map[string]reflect.Type{
-		"env_hmac_key_backend": reflect.TypeOf(EnvHmacKeyBackend{}),
-		"hmac_key_backend": reflect.TypeOf(HmacKeyBackend{}),
-		"lazy_hmac_key_backend": reflect.TypeOf(LazyHmacKeyBackend{}),
-		"public_key_backend": reflect.TypeOf(PublicKeyBackend{}),
+		"env_hmac_key_backend":    reflect.TypeOf(EnvHmacKeyBackend{}),
+		"hmac_key_backend":        reflect.TypeOf(HmacKeyBackend{}),
+		"lazy_hmac_key_backend":   reflect.TypeOf(LazyHmacKeyBackend{}),
+		"public_key_backend":      reflect.TypeOf(PublicKeyBackend{}),
 		"lazy_public_key_backend": reflect.TypeOf(LazyPublicKeyBackend{}),
 	})
 	if err != nil {
