@@ -2,26 +2,26 @@
 
 [![Build Status](https://travis-ci.org/BTBurke/caddy-jwt.svg?branch=master)](https://travis-ci.org/BTBurke/caddy-jwt)
 
-**Note on Caddy v2**
-
-There is a major new version of Caddy in beta.  Caddy v2 makes significant changes to how plugins work, to the point that this plugin will no longer work with the latest version of caddy and would require significant effort to update it.  If you use this plugin and would like a Caddy v2 version, please let me know your wish list of features on [this issue](https://github.com/BTBurke/caddy-jwt/issues/57).
-
-**Authorization Middleware for Caddy**
+**Authorization Middleware for Caddy2**
 
 This middleware implements an authorization layer for [Caddy](https://caddyserver.com) based on JSON Web Tokens (JWT).  You can learn more about using JWT in your application at [jwt.io](https://jwt.io).
 
 ### Basic Syntax
 
 ```
-jwt [path]
+jwt [matcher]
 ```
 
-By default every resource under path will be secured using JWT validation.  To specify a list of resources that need to be secured, use multiple declarations:
+By default every request matching the matcher will be secured using JWT validation.
+To specify a list of resources that need to be secured, use multiple declarations:
 
 ```
-jwt [path1]
-jwt [path2]
+jwt [matcher1]
+jwt [matcher2]
 ```
+
+A matcher will usually be a path glob (e.g. `/*`), but can be any matcher supported
+by caddy. See [the caddy docs for matchers](https://caddyserver.com/docs/caddyfile/matchers) for more information.
 
 > **Important** You must set the secret used to construct your token in an environment variable named `JWT_SECRET`(HMAC) *or* `JWT_PUBLIC_KEY`(RSA or ECDSA).  Otherwise, your tokens will silently fail validation.  Caddy will start without this value set, but it must be present at the time of the request for the signature to be validated.
 
@@ -31,21 +31,19 @@ You can optionally use claim information to further control access to your route
 If the claim is a json array of strings, the allow and deny directives will check if the array contains the specified string value.  An allow or deny rule will be valid if any value in the array is a match.
 
 ```
-jwt {
-   path [path]
+jwt * {
    redirect [location]
    allow [claim] [value]
    deny [claim] [value]
 }
 ```
 
-To authorize access based on a claim, use the `allow` syntax.  To deny access, use the `deny` keyword.  You can use multiple keywords to achieve complex access rules.  If any `allow` access rule returns true, access will be allowed.  If a `deny` rule is true, access will be denied.  Deny rules will allow any other value for that claim.   
+To authorize access based on a claim, use the `allow` syntax.  To deny access, use the `deny` keyword.  You can use multiple keywords to achieve complex access rules.  If any `allow` access rule returns true, access will be allowed.  If a `deny` rule is true, access will be denied.  Deny rules will allow any other value for that claim.
 
   For example, suppose you have a token with `user: someone` and `role: member`.  If you have the following access block:
 
 ```
-jwt {
-   path /protected
+jwt /protected/* {
    deny role member
    allow user someone
 }
@@ -53,7 +51,8 @@ jwt {
 
 The middleware will deny everyone with `role: member` but will allow the specific user named `someone`.  A different user with a `role: admin` or `role: foo` would be allowed because the deny rule will allow anyone that doesn't have role member.
 
-If the optional `redirect` is set, the middleware will send a redirect to the supplied location (HTTP 303) instead of an access denied code, if the access is denied.
+If the optional `redirect` is set, the middleware will send a redirect to the supplied location (HTTP 302) instead of an access denied code, if the access is denied.
+More advanced error handling can be specified using the caddy `handle_error` directive (TODO: Point to docs when they're done).
 
 ### Ways of passing a token for validation
 
@@ -69,7 +68,7 @@ It is possible to customize what token sources should be used via the `token_sou
 do the same validation as default, but with the different header, cookie and query param names, the user could use the following snippet:
 
 ```
-jwt {
+jwt * {
    ...
    token_source header my_header_type
    token_source cookie my_cookie_name
@@ -150,8 +149,7 @@ Token-Claim-Http:%2F%2Fexample.com%2Fuser: test
 If you only care about the last section of the path, you can use the `strip_header` directive to strip everything before the last portion of the path.
 
 ```
-jwt {
-  path /
+jwt * {
   strip_header
 }
 ```
@@ -164,23 +162,38 @@ Token-Claim-User: test
 
 ### Allowing Public Access to Certain Paths
 
-In some cases, you may want to allow public access to a particular path without a valid token.  For example, you may want to protect all your routes except access to the `/login` path.  You can do that with the `except` directive.
+The "matchers" in Caddy2 are a very powerful concept, allowing the user to
+carefully tailor exactly what they want to match. In some cases, you may want to
+allow public access to a particular path without a valid token. For example, you
+may want to protect all your routes except access to the `/login` path.
+
+You can do this by using a custom caddy matcher:
 
 ```
-jwt {
-  path /
-  except /login
+@mymatcher {
+  path *
+  not {
+    path /login/*
+  }
 }
+jwt @mymatcher
 ```
 
-Every path that begins with `/login` will be excepted from the JWT token requirement.  All other paths will be protected.  In the case that you set your path to the root as in the example above, you also might want to allow access to the so-called naked or root domain while protecting everything else.  You can use the directive `allowroot` which will allow access to the naked domain.  For example, if you have the following config block:
+Every path that begins with `/login` will be excepted from the JWT token
+requirement.  All other paths will be protected.  In the case that you set your
+path to the root as in the example above, you also might want to allow access to
+the so-called naked or root domain while protecting everything else. This can
+be done similarly:
 
 ```
-jwt {
-  path /
-  except /login
-  allowroot
+@mymatcher {
+  path *
+  not {
+    path /login/*
+    path /
+  }
 }
+jwt @mymatcher
 ```
 
 Requests to `https://example.com/login` and `https://example.com/` will both be allowed without a valid token.  Any other path will require a valid token.
@@ -190,8 +203,7 @@ Requests to `https://example.com/login` and `https://example.com/` will both be 
 In some cases, a page should be accessible whether a valid token is present or not. An example might be the Github home page or a public repository, which should be visible even to logged-out users. In those cases, you would want to parse any valid token that might be present and pass the claims through to the application, leaving it to the application to decide whether the user has access. You can use the directive `passthrough` for this:
 
 ```
-jwt {
-  path /
+jwt * {
   passthrough
 }
 ```
@@ -207,17 +219,14 @@ When you run multiple sites from one Caddyfile, you can specify the location of 
 For RSA or ECDSA tokens:
 
 ```
-jwt {
-  path /
-  publickey /path/to/key.pem
-} 
+jwt * {
+y}
 ```
 
 For HMAC:
 
 ```
-jwt {
-  path /
+jwt * {
   secret /path/to/secret.txt
 }
 ```
@@ -227,8 +236,7 @@ When you store your key material in a file, this middleware will cache the resul
 If you have multiple public keys or secrets that should be considered valid, use multiple declarations to the keys or secrets in different files.  Authorization will be allowed if any of the keys validate the token.
 
 ```
-jwt {
-  path /
+jwt * {
   publickey /path/to/key1.pem
   publickey /path/to/key2.pem
 }
@@ -242,7 +250,40 @@ jwt {
 | 403 | Forbidden - Token is valid but denied because of an ALLOW or DENY rule |
 | 303 | A 401 or 403 was returned and the redirect is enabled.  This takes precedence over a 401 or 403 status. |
 
-
 ### Caveats
 
 JWT validation depends only on validating the correct signature and that the token is unexpired.  You can also set the `nbf` field to prevent validation before a certain timestamp.  Other fields in the specification, such as `aud`, `iss`, `sub`, `iat`, and `jti` will not affect the validation step.
+
+### Low-level JSON configuration
+
+JWT2 can also be configured via raw JSON configuration. The JSON handler object
+looks like this:
+
+```json5
+{
+  // The name of the realm. Default: restricted
+  "realm": "",
+  "access_rules": [{
+    // May be "ALLOW" or "DENY"
+    "authorize": "ALLOW",
+    "claim": "sub",
+    "value": "roblabla"
+  }],
+  "key_backends": [
+    {
+      "type": "env_hmac_key_backend",
+      "value": {}
+    },
+    {
+      "type": "lazy_public_key_backend",
+      "value": {
+        "filename": "/path/to/key2.pem"
+      }
+    },
+  ],
+  "passthrough": true,
+  "strip_header": true,
+  "token_sources": [
+
+  ]
+}
